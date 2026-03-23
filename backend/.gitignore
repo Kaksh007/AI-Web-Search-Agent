@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables - NEVER commit this
+.env
+.env.local
+.env.production
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# PyInstaller
+*.spec
+
+# Unit test / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# FastAPI / Uvicorn
+*.pid

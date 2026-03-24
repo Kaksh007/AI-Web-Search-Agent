@@ -1,5 +1,24 @@
-export default function SourceList({ sources }) {
-  if (!sources?.length) return null;
+function extractLinksFromAnswer(answer = "") {
+  const matches = answer.match(/https?:\/\/[^\s\])"']+/g) || [];
+  const unique = [];
+  const seen = new Set();
+  for (const raw of matches) {
+    const url = raw.replace(/[.,;:]+$/, "");
+    if (!seen.has(url)) {
+      seen.add(url);
+      unique.push({ title: url, url });
+    }
+  }
+  return unique;
+}
+
+export default function SourceList({ sources, answer, mode }) {
+  const fromResponse = Array.isArray(sources) ? sources : [];
+  const fallback = extractLinksFromAnswer(answer);
+  const finalSources = fromResponse.length ? fromResponse : fallback;
+
+  if (mode === "llm-only") return null;
+  if (!finalSources.length) return null;
 
   return (
     <div style={{
@@ -19,13 +38,13 @@ export default function SourceList({ sources }) {
         alignItems: "center",
         gap: "8px",
       }}>
-        Sources Used
+        Sources (Links)
         <span style={{ flex: 1, height: "1px", background: "var(--border-color)" }} />
       </div>
 
       {/* Source items */}
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        {sources.map((s, i) => {
+        {finalSources.map((s, i) => {
           let domain = s.url;
           try { domain = new URL(s.url).hostname.replace("www.", ""); } catch {}
 

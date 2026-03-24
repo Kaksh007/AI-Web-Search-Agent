@@ -1,6 +1,7 @@
 from groq import Groq
 from app.config import GROQ_API_KEY
 from app.models import Source, SearchResponse
+import re
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -12,28 +13,30 @@ AVAILABLE_MODELS = {
 }
 
 
-def _extract_compound_sources(executed_tools) -> list[Source]:
-    """Pull source URLs out of Compound's executed_tools response."""
-    sources = []
-    if not executed_tools:
-        return sources
-    for tool in executed_tools:
-        search_results = getattr(tool, "search_results", None)
-        if not search_results:
-            continue
-        for result in search_results:
-            try:
-                if isinstance(result, dict):
-                    title = result.get("title", "")
-                    url   = result.get("url", "")
-                else:
-                    title = getattr(result, "title", "")
-                    url   = getattr(result, "url", "")
-                if url and url.startswith("http"):
-                    sources.append(Source(title=title or url, url=url))
-            except Exception:
-                continue
-    return sources[:8]
+def _parse_compound_output(raw: str) -> tuple[str, list[Source]]:
+    """Parse a Compound response into (clean_answer, sources).
+
+    Expects the model to append a SOURCES: block with '- title | url' lines.
+    Falls back gracefully when the block is missing or malformed.
+    """
+    raw = (raw or "").strip()
+    answer = raw
+    sources: list[Source] = []
+    seen: set[str] = set()
+
+    if "SOURCES:" in raw:
+        answer, sources_block = raw.split("SOURCES:", 1)
+        for line in sources_block.strip().splitlines():
+            line = line.strip().lstrip("-").strip()
+            if "|" in line:
+                title, url = line.split("|", 1)
+                url = url.strip().rstrip(".,;:")
+                if url.startswith("http") and url not in seen:
+                    seen.add(url)
+                    sources.append(Source(title=title.strip(), url=url))
+
+    answer = re.sub(r"\s*【[^\】]*】", "", answer).strip()
+    return answer, sources[:8]
 
 
 def call_llm(prompt: str, model: str) -> str:
@@ -142,22 +145,24 @@ FOLLOW_UP:
                 {
                     "role": "system",
                     "content": (
-                        "You are an AI search assistant with real-time web access. "
+                        "You are an AI search assistant with real-time web access.\n"
                         "Search the web, then answer the user's query accurately "
-                        "in 4-6 sentences. Cite facts from search results."
+                        "in 4-6 sentences.\n\n"
+                        "After your answer, list the sources you used in EXACTLY this format:\n\n"
+                        "SOURCES:\n"
+                        "- Page title | https://example.com/article\n"
+                        "- Another title | https://example.com/other\n\n"
+                        "Always include at least one source. "
+                        "Do NOT use citation markers like 【1†L1-L9】."
                     ),
                 },
                 {"role": "user", "content": query},
             ],
         )
 
-        answer = completion.choices[0].message.content or ""
-
-        executed_tools = getattr(
-            completion.choices[0].message, "executed_tools", None
-        )
-        sources    = _extract_compound_sources(executed_tools)
-        confidence = 85 if executed_tools else 65
+        raw_answer = completion.choices[0].message.content or ""
+        answer, sources = _parse_compound_output(raw_answer)
+        confidence = 85 if sources else 65
 
         # Quick follow-up generation with a fast model
         follow_up: list[str] = []

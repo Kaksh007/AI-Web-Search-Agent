@@ -152,7 +152,11 @@ export default function ResultCard({ result, query, onFollowUp }) {
       </div>
 
       {/* Sources */}
-      <SourceList sources={result.sources} />
+      <SourceList
+        sources={result.sources}
+        answer={result.answer}
+        mode={result.mode}
+      />
 
       {/* Follow-up questions */}
       {result.follow_up?.length > 0 && (

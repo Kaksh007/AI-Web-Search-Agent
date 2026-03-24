@@ -1,7 +1,8 @@
 {
-  "name": "frontend",
-  "version": "0.1.0",
+  "name": "ai-web-search-agent-frontend",
+  "version": "1.0.0",
   "private": true,
+  "description": "Frontend for the AI Web Search Agent — Next.js 16 + React 19",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

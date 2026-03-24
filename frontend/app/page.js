@@ -143,7 +143,16 @@ export default function Home() {
         )}
 
         {/* Result */}
-        {result && <ResultCard result={result} query={query} />}
+        {result && (
+          <ResultCard
+            result={result}
+            query={query}
+            onFollowUp={(q) => {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+              handleSearch(q);
+            }}
+          />
+        )}
 
         {/* History */}
         {history.length > 0 && (

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class SearchRequest(BaseModel):
     query: str
@@ -11,3 +11,5 @@ class Source(BaseModel):
 class SearchResponse(BaseModel):
     answer: str
     sources: List[Source]
+    follow_up: List[str] = []
+    confidence: int = 0

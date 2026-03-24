@@ -5,13 +5,13 @@ import SourceList from "./SourceList";
 function ConfidenceBar({ score }) {
   const color =
     score >= 75 ? "var(--accent2)" :
-    score >= 40 ? "#f59e0b" :
-    "var(--accent3)";
+      score >= 40 ? "#f59e0b" :
+        "var(--accent3)";
 
   const label =
     score >= 75 ? "High confidence" :
-    score >= 40 ? "Medium confidence" :
-    "Low confidence";
+      score >= 40 ? "Medium confidence" :
+        "Low confidence";
 
   return (
     <div style={{ marginBottom: "20px" }}>
@@ -82,6 +82,19 @@ export default function ResultCard({ result, query, onFollowUp }) {
           color: "var(--accent)",
         }}>
           ✦ Answer
+        </span>
+        {/* Mode + model badge */}
+        <span style={{
+          fontSize: "10px",
+          fontFamily: "'DM Mono', monospace",
+          color: "var(--muted)",
+          background: "rgba(107,107,138,0.1)",
+          border: "1px solid var(--border-color)",
+          borderRadius: "4px",
+          padding: "2px 7px",
+          flexShrink: 0,
+        }}>
+          {result.mode === "llm-only" ? "LLM only" : "Web + LLM"} · {result.model_used}
         </span>
         <span style={{
           fontSize: "12px",

@@ -11,13 +11,13 @@ export default function Home() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
 
-  const handleSearch = async (q) => {
+  const handleSearch = async (q, mode = "ddg+llm", model = "llama-3.3-70b-versatile") => {
     setQuery(q);
     setLoading(true);
     setError("");
     setResult(null);
     try {
-      const data = await search(q);
+      const data = await search(q, mode, model);
       setResult(data);
       setHistory(prev => [
         { q, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },

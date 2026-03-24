@@ -6,4 +6,4 @@ router = APIRouter()
 
 @router.post("/search", response_model=SearchResponse)
 async def search(req: SearchRequest):
-    return await run_agent(req.query)
+    return await run_agent(req.query, req.mode, req.model)

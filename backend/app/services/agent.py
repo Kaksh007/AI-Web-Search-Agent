@@ -1,127 +1,217 @@
 from groq import Groq
 from app.config import GROQ_API_KEY
 from app.models import Source, SearchResponse
-import httpx
 
 client = Groq(api_key=GROQ_API_KEY)
 
-
-async def web_search(query: str) -> list[dict]:
-    async with httpx.AsyncClient() as http:
-        r = await http.get(
-            "https://api.duckduckgo.com/",
-            params={"q": query, "format": "json", "no_redirect": 1},
-            timeout=8,
-        )
-    data = r.json()
-    results = []
-
-    if data.get("AbstractText"):
-        results.append({
-            "title": data.get("Heading", query),
-            "url": data.get("AbstractURL", ""),
-            "snippet": data["AbstractText"],
-        })
-
-    for topic in data.get("RelatedTopics", [])[:4]:
-        if "Text" in topic and "FirstURL" in topic:
-            results.append({
-                "title": topic["Text"][:60],
-                "url": topic["FirstURL"],
-                "snippet": topic["Text"],
-            })
-    return results
+AVAILABLE_MODELS = {
+    "llama-3.3-70b-versatile": "Llama 3.3 70B",
+    "llama-3.1-8b-instant":    "Llama 3.1 8B",
+    "openai/gpt-oss-120b":     "GPT-OSS 120B",
+    "openai/gpt-oss-20b":      "GPT-OSS 20B",
+}
 
 
-async def run_agent(query: str) -> SearchResponse:
-    results = await web_search(query)
+def _extract_compound_sources(executed_tools) -> list[Source]:
+    """Pull source URLs out of Compound's executed_tools response."""
+    sources = []
+    if not executed_tools:
+        return sources
+    for tool in executed_tools:
+        search_results = getattr(tool, "search_results", None)
+        if not search_results:
+            continue
+        for result in search_results:
+            try:
+                if isinstance(result, dict):
+                    title = result.get("title", "")
+                    url   = result.get("url", "")
+                else:
+                    title = getattr(result, "title", "")
+                    url   = getattr(result, "url", "")
+                if url and url.startswith("http"):
+                    sources.append(Source(title=title or url, url=url))
+            except Exception:
+                continue
+    return sources[:8]
 
-    context = "\n\n".join(
-        f"[{i+1}] {r['title']}\n{r['snippet']}\nURL: {r['url']}"
-        for i, r in enumerate(results)
-    ) or "No web results found."
 
-    prompt = f"""You are an AI search assistant.
-User query: {query}
-
-Web search context:
-{context}
-
-If the query appears to be a typo or misspelling, interpret it as the closest real word.
-
-Respond in EXACTLY this format with no deviations:
-
-ANSWER:
-Write a clear, concise answer (3-5 sentences) based on the context.
-
-CONFIDENCE: <number from 0 to 100 based on how well the search results answered the query>
-
-SOURCES:
-- title | url
-
-FOLLOW_UP:
-- first follow up question?
-- second follow up question?
-- third follow up question?
-"""
+def call_llm(prompt: str, model: str) -> str:
+    """Single reusable LLM call."""
+    if model not in AVAILABLE_MODELS:
+        model = "llama-3.3-70b-versatile"
 
     completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=model,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=800,
+        temperature=0.4,
+        max_tokens=900,
     )
+    return completion.choices[0].message.content or ""
 
-    raw = completion.choices[0].message.content or ""
 
-    # --- Parse ANSWER ---
-    answer_part = ""
-    if "ANSWER:" in raw:
-        after_answer = raw.split("ANSWER:", 1)[1]
-        # take everything until the next section
-        for section in ["CONFIDENCE:", "SOURCES:", "FOLLOW_UP:"]:
-            if section in after_answer:
-                after_answer = after_answer.split(section, 1)[0]
-        answer_part = after_answer.strip()
+def parse_response(raw: str) -> dict:
+    """Parse structured LLM output into answer / confidence / sources / follow_up."""
 
-    # --- Parse CONFIDENCE ---
+    answer     = ""
     confidence = 0
+    sources    = []
+    follow_up  = []
+
+    # ANSWER
+    if "ANSWER:" in raw:
+        block = raw.split("ANSWER:", 1)[1]
+        for stop in ["CONFIDENCE:", "SOURCES:", "FOLLOW_UP:"]:
+            if stop in block:
+                block = block.split(stop, 1)[0]
+        answer = block.strip()
+
+    # CONFIDENCE
     if "CONFIDENCE:" in raw:
-        conf_line = raw.split("CONFIDENCE:", 1)[1].split("\n", 1)[0]
-        digits = "".join(filter(str.isdigit, conf_line))
+        line   = raw.split("CONFIDENCE:", 1)[1].split("\n", 1)[0]
+        digits = "".join(filter(str.isdigit, line))
         confidence = min(int(digits), 100) if digits else 0
 
-    # --- Parse SOURCES ---
-    sources = []
+    # SOURCES
     if "SOURCES:" in raw:
-        sources_block = raw.split("SOURCES:", 1)[1]
-        if "FOLLOW_UP:" in sources_block:
-            sources_block = sources_block.split("FOLLOW_UP:", 1)[0]
-        for line in sources_block.strip().splitlines():
+        block = raw.split("SOURCES:", 1)[1]
+        if "FOLLOW_UP:" in block:
+            block = block.split("FOLLOW_UP:", 1)[0]
+        for line in block.strip().splitlines():
             line = line.strip().lstrip("-").strip()
             if "|" in line:
                 title, url = line.split("|", 1)
-                sources.append(Source(title=title.strip(), url=url.strip()))
+                url = url.strip()
+                if url.startswith("http"):
+                    sources.append(Source(title=title.strip(), url=url))
 
-    # Fallback sources
-    if not sources:
-        sources = [
-            Source(title=r["title"], url=r["url"])
-            for r in results if r["url"]
-        ]
-
-    # --- Parse FOLLOW_UP ---
-    follow_up = []
+    # FOLLOW_UP
     if "FOLLOW_UP:" in raw:
-        fu_block = raw.split("FOLLOW_UP:", 1)[1].strip()
-        for line in fu_block.splitlines():
+        block = raw.split("FOLLOW_UP:", 1)[1].strip()
+        for line in block.splitlines():
             line = line.strip().lstrip("-").strip()
             if line and "?" in line:
                 follow_up.append(line)
 
-    return SearchResponse(
-        answer=answer_part or raw.strip(),
-        sources=sources,
-        follow_up=follow_up[:3],
-        confidence=confidence,
-    )
+    return {
+        "answer":     answer or raw.strip(),
+        "confidence": confidence,
+        "sources":    sources,
+        "follow_up":  follow_up[:3],
+    }
+
+
+async def run_agent(query: str, mode: str, model: str) -> SearchResponse:
+
+    # ── MODE 1: LLM Only ─────────────────────────────────────────────
+    if mode == "llm-only":
+        prompt = f"""You are a helpful, knowledgeable AI assistant like ChatGPT or Claude.
+Answer the following question thoroughly and accurately from your training knowledge.
+
+Question: {query}
+
+Respond in EXACTLY this format:
+
+ANSWER:
+Your detailed answer here (4-6 sentences, be thorough and helpful).
+
+CONFIDENCE: <0-100, how confident you are in your answer>
+
+FOLLOW_UP:
+- relevant follow up question 1?
+- relevant follow up question 2?
+- relevant follow up question 3?
+"""
+        raw    = call_llm(prompt, model)
+        parsed = parse_response(raw)
+
+        return SearchResponse(
+            answer     = parsed["answer"],
+            sources    = [],
+            follow_up  = parsed["follow_up"],
+            confidence = parsed["confidence"],
+            mode       = "llm-only",
+            model_used = AVAILABLE_MODELS.get(model, model),
+        )
+
+    # ── MODE 2: Web + LLM  (Groq Compound — built-in web search) ─────
+    try:
+        completion = client.chat.completions.create(
+            model="groq/compound",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an AI search assistant with real-time web access. "
+                        "Search the web, then answer the user's query accurately "
+                        "in 4-6 sentences. Cite facts from search results."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+        )
+
+        answer = completion.choices[0].message.content or ""
+
+        executed_tools = getattr(
+            completion.choices[0].message, "executed_tools", None
+        )
+        sources    = _extract_compound_sources(executed_tools)
+        confidence = 85 if executed_tools else 65
+
+        # Quick follow-up generation with a fast model
+        follow_up: list[str] = []
+        try:
+            fq_raw = call_llm(
+                f'Given the query "{query}", suggest exactly 3 brief '
+                f"follow-up questions a user might ask next. "
+                f"One per line, starting with '- '.",
+                "llama-3.1-8b-instant",
+            )
+            follow_up = [
+                line.strip().lstrip("-").strip()
+                for line in fq_raw.splitlines()
+                if "?" in line
+            ][:3]
+        except Exception:
+            pass
+
+        return SearchResponse(
+            answer     = answer,
+            sources    = sources,
+            follow_up  = follow_up,
+            confidence = confidence,
+            mode       = "ddg+llm",
+            model_used = "Groq Compound",
+        )
+
+    except Exception:
+        # Fallback: if Compound fails, use chosen model without web search
+        prompt = f"""You are a helpful AI assistant.
+Answer the following question as accurately as you can.
+
+Question: {query}
+
+Respond in EXACTLY this format:
+
+ANSWER:
+Your answer here (4-6 sentences).
+
+CONFIDENCE: <0-100>
+
+FOLLOW_UP:
+- follow up question 1?
+- follow up question 2?
+- follow up question 3?
+"""
+        raw    = call_llm(prompt, model)
+        parsed = parse_response(raw)
+
+        return SearchResponse(
+            answer     = parsed["answer"],
+            sources    = [],
+            follow_up  = parsed["follow_up"],
+            confidence = max(parsed["confidence"] - 10, 0),
+            mode       = "ddg+llm",
+            model_used = AVAILABLE_MODELS.get(model, model),
+        )

@@ -6,7 +6,7 @@ app = FastAPI(title="AI Search Agent")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],  # Dev/LAN access
     allow_methods=["*"],
     allow_headers=["*"],
 )

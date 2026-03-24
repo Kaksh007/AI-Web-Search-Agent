@@ -1,4 +1,14 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL;
+const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL;
+const API_PORT = process.env.NEXT_PUBLIC_API_PORT || "8000";
+
+function getApiBase() {
+  if (API_ORIGIN) return API_ORIGIN.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:${API_PORT}`;
+  }
+  return `http://localhost:${API_PORT}`;
+}
 
 export const MODES = [
   { value: "ddg+llm",  label: "Web + LLM",  desc: "Search web, answer with AI" },
@@ -13,7 +23,7 @@ export const MODELS = [
 ];
 
 export async function search(query, mode = "ddg+llm", model = "llama-3.3-70b-versatile") {
-  const res = await fetch(`${BASE}/api/search`, {
+  const res = await fetch(`${getApiBase()}/api/search`, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({ query, mode, model }),
